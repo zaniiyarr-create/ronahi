@@ -459,7 +459,25 @@ class TelegramError(Exception):
         self.delay = delay
 
 
+def reader_links(text):
+    domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN","").strip()
+    base = os.environ.get("QURAN_SITE_URL", "").strip().rstrip("/") or ("https://" + domain if domain else "")
+    if not base:
+        return re.sub(r"https://quran[.]com/([0-9]+)(?:/([0-9]+))?", lambda m: "سوورەت " + m[1] + (" · ئایەت " + m[2] if m[2] else ""), text)
+    return text.replace("https://quran.com/", base + "/#")
+
+def start_reader():
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+    from functools import partial
+    from threading import Thread
+    directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+    handler = partial(SimpleHTTPRequestHandler, directory=directory)
+    server = ThreadingHTTPServer(("0.0.0.0",int(os.environ.get("PORT","8080"))),handler)
+    Thread(target=server.serve_forever,daemon=True).start()
+
 def api(token, method, **payload):
+    if method == "sendMessage":
+        payload["text"] = reader_links(payload["text"])
     req = Request("https://api.telegram.org/bot" + token + "/" + method,
                   data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
     try:
@@ -531,6 +549,7 @@ if __name__ == "__main__":
     secret = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     if not re.fullmatch(r"[0-9]+:[A-Za-z0-9_-]+", secret):
         raise SystemExit("Set TELEGRAM_BOT_TOKEN in Railway Variables, then deploy.")
+    start_reader()
     print("Ronahi Max worker starting.", flush=True)
     try:
         serve(secret)

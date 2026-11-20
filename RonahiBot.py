@@ -1,4 +1,6 @@
 import secrets
+import subprocess
+import ronahi_ai as ai
 from urllib.parse import urlencode
 import json
 import os
@@ -512,7 +514,109 @@ def track_join(db,chat,text):
         db.execute("INSERT OR IGNORE INTO joins(chat,code,source) SELECT ?,code,? FROM invite_links WHERE code=? AND chat<>?",(chat,source,code,chat))
 
 
-def process(db, message, username=None):
+MENU.insert(0, [ai.BUTTON])
+
+
+PASSAGES = ai.passage_index(VERSE_TEXT)
+
+def remember_exchange(state, question, answer):
+    state["ai_history"] = (state.get("ai_history", []) + [[question[:4096], answer[:4000]]])[-8:]
+
+
+def quoted_result(quote, state):
+    hits = ai.find_passage(quote, PASSAGES)
+    if not hits:
+        return "جهێ ئەڤێ پارچەیێ ب دڵنیایی نەهاتە دیتن. چەند پەیڤێن دی ژ ئایەتێ بنێرە.", [[BACK]]
+    if len(hits) > 1:
+        links = [f"{verse_name(f'{c}:{v}')}  https://quran.com/{c}/{v}" for c,v,_ in hits]
+        return "ئەڤ پارچەیە ل چەند جهان هاتیە دیتن. لینکەکێ ڤەکە یان چەند پەیڤێن دی بنێرە.\n\n" + "\n".join(links), [[BACK]]
+    c, first, last = hits[0]
+    state["mode"] = "ai"
+    span = str(first) if first == last else f"{first}–{last}"
+    lines = [VERSE_TEXT[f"{c}:{v}"] for v in range(first, min(first+4,last+1))]
+    answer = f"سوورەتا {SURAHS[c-1]} · {span}\n\n" + "\n".join(lines) + f"\n\nخواندن • https://quran.com/{c}/{first}"
+    remember_exchange(state, quote, answer)
+    return answer, [[BACK]]
+
+
+def assistant_action(message, state, token):
+    text = message.get("text", "").strip()
+    mode = state.get("mode")
+    if text == "/new":
+        state.pop("ai_history", None)
+    if text in (ai.BUTTON, "/ai", "/new"):
+        state.pop("ai_clock", None)
+        state["mode"] = "ai"
+        return ai.HELP, [[BACK]]
+    if mode == "ai_confirm":
+        clock = state.pop("ai_clock", None)
+        state["mode"] = None
+        if text == ai.YES and clock:
+            state["mode"] = "reminder"
+            return reading_action(clock, state)
+        if text == BACK or text.startswith("/"):
+            return None
+        return "یادئینان نەهاتە گوهارتن.", MENU
+    if mode != "ai":
+        if message.get("voice"):
+            return "بۆ فرمانا دەنگی دوگمەیا «هاریکارێ زیرەک» لێ بدە، پاشی دەنگێ خۆ بنێرە.", [[ai.BUTTON, BACK]]
+        return None
+    if text.startswith("/") or text in {b for row in MENU for b in row} or text == BACK:
+        state["mode"] = None
+        return None
+    if text and len(text) <= 1200:
+        parts = re.split(r"(?:دبێژیت|دبێژت|دبێژێت|تقول|التي فيها|that says)\s*[:،]?", text, flags=re.I)
+        if len(parts) > 1 and ai.find_passage(parts[-1], PASSAGES):
+            return quoted_result(parts[-1], state)
+        if re.fullmatch(r"[\u0600-\u06ff\s]+", text) and ai.find_passage(text, PASSAGES):
+            return quoted_result(text, state)
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        return "هاریکار هێشتا نەهاتیە چالاککرن. خودانێ بۆتی دڤێت GEMINI_API_KEY ل Railway زێدە بکەت.", [[BACK]]
+    voice = message.get("voice")
+    if voice and (voice.get("duration", 0) > 60 or voice.get("file_size", 0) > ai.LIMIT):
+        return "دەنگەکێ تا ٦٠ چرکە و ٢ مێگابایت بنێرە.", [[BACK]]
+    if not voice and not 0 < len(text) <= 4096:
+        return "فرمانەکا کورت بنڤیسە یان دەنگەکێ بنێرە.", [[BACK]]
+    try:
+        part = ai.voice_part(token, voice, api) if voice else {"text": text}
+        intent = ai.interpret(part, key, state.get("ai_history", []))
+    except (OSError, ValueError, IndexError, TypeError, KeyError, TelegramError, subprocess.SubprocessError) as err:
+        print("AI request failed:", type(err).__name__, getattr(err, "code", ""), flush=True)
+        return "هاریکار نەشیا فرمانێ وەربگریت. دووبارە بنێرە یان ژ مینیویێ هەلبژێرە.", [[BACK]]
+    if not isinstance(intent, dict):
+        intent = {}
+    action = intent.get("action")
+    c, v, n = (intent.get(k) for k in ("chapter", "verse", "number"))
+    if action == "chat" and isinstance(intent.get("answer"), str) and intent["answer"].strip():
+        answer = intent["answer"].strip()[:4000]
+        heard = intent.get("heard")
+        question = text or (heard if isinstance(heard, str) else "") or "پەیامەکا دەنگی"
+        remember_exchange(state, question, answer)
+        return answer, [[BACK]]
+    if action == "find_quote" and isinstance(intent.get("quote"), str):
+        return quoted_result(intent["quote"][:600], state)
+    if action == "reminder" and isinstance(intent.get("time"), str) and re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", intent["time"]):
+        clock = intent["time"]
+        state.update(mode="ai_confirm", ai_clock=clock)
+        return f"هەر ڕۆژ د {clock} ب دەمێ عێراقێ یادا خواندنێ ب تە بینم؟", [[ai.YES], [BACK]]
+    if action == "ask_time":
+        return "فرمانێ دگەل دەمێ تەمام دووبارە بکە، وەک «هەر ڕۆژ د ٢٠:٠٠ یادا خواندنێ ب من بینە».", [[BACK]]
+    if action == "verse" and type(c) is int and type(v) is int and f"{c}:{v}" in VERSE_TEXT:
+        state["mode"] = None
+        return verse_body(f"{c}:{v}"), MENU
+    if action == "surah" and type(c) is int and 1 <= c <= 114:
+        return route(f"/quran {c}", state)
+    if action == "juz" and type(n) is int and 1 <= n <= 30:
+        state["mode"] = None
+        return route(f"/juz {n}", state)
+    if action in ("prayer", "dua", "dhikr", "resume", "quiz", "hifz", "ayah", "profile"):
+        state["mode"] = None
+        return route("/" + action, state)
+    return "فرمان ڕوون نەبوو. تکایە ئێک فرمان بنێرە.\n\n" + ai.HELP, [[BACK]]
+
+
+def process(db, message, username=None, token=None):
     chat = message["chat"]["id"]
     mid = message["message_id"]
     with db:
@@ -526,7 +630,10 @@ def process(db, message, username=None):
         text = message.get("text","")
         if row is None:
             track_join(db,chat,text)
-        if username and text.strip() in (INVITE,"/invite"):
+        response = assistant_action(message, state, token)
+        if response is not None:
+            pass
+        elif username and text.strip() in (INVITE,"/invite"):
             state["mode"] = None
             response = invite_card(db,chat,username)
         else:
@@ -615,7 +722,7 @@ def serve(token):
                 message = item.get("message", {})
                 if message.get("chat", {}).get("type") == "private":
                     print("Private message received.", flush=True)
-                    body, rows = process(db, message, bot["username"])
+                    body, rows = process(db, message, bot["username"], token)
                     try:
                         api(token, "sendMessage", chat_id=message["chat"]["id"], text=body,
                             reply_markup=rows if isinstance(rows, dict) else {"keyboard": [[{"text": label} for label in row] for row in rows], "resize_keyboard": True},

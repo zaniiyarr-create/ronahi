@@ -9,6 +9,24 @@ const link=(c,v=1)=>'#'+c+'/'+v;
 function element(tag,cls,txt){const el=document.createElement(tag);el.className=cls;el.textContent=txt;return el}
 function act(label,fn){const el=element('button','',label);el.onclick=fn;return el}
 function anchor(text,url,cls='pill'){const a=element('a',cls,text);a.href=url;return a}
+const glosses = {"الصَّمَدُ": ["112:2", "خودایێ هەمی ئافراندی د پێدڤیێن خۆ دا بەرێ خۆ ددەنێ."], "الْفَلَقِ": ["113:1", "سپێدە، دەمێ ڕووناهییا ڕۆژێ دەردکەڤیت."], "أَعُوذُ": ["113:1", "ئەز پەنا دبەم و پاراستنێ دخوازم."], "الْخَنَّاسِ": ["114:4", "ئەوێ وسوەسێ دکەت و دەمێ مرۆڤ خودێ ب بیر دئینیت، پاشڤە دکێشیت."], "الصِّرَاطَ": ["1:6", "ڕێک. د ڤێ ئایەتێ دا داخوازی ژ خودێیە کو مە بەری ڕێکا ڕاست ببەت."]};
+function verseGlosses(paragraph, line, chapter, verse) {
+ const entries = Object.entries(glosses).filter(([,data]) => data[0] === chapter+':'+verse);
+ if (!entries.length) return;
+ const note = element('span','','');
+ note.setAttribute('aria-live','polite');
+ paragraph.replaceChildren();
+ for (const token of line.split(/(\s+)/)) {
+   const match = entries.find(([word]) => normal(word) === normal(token) || normal(word) === normal(token.replaceAll('ٰ','ا')));
+   if (!match) { paragraph.append(token); continue; }
+   const button = act(token, () => {
+     note.replaceChildren(match[1][1]+' ',anchor('تفسیر السعدي','https://quran.ksu.edu.sa/tafseer/saadi/sura'+chapter+'-aya'+verse+'.html'));
+   });
+   button.style.font='inherit';
+   paragraph.append(button);
+ }
+ paragraph.append(document.createElement('br'),note);
+}
 function card(c,v,text){
  const a=anchor('',link(c,v),'card');a.append(element('span','num',digits(c)));
  const box=element('div','','');box.append(element('strong','',names[c-1]),document.createElement('br'),element('small','',text));a.append(box);return a
@@ -85,7 +103,7 @@ function view(){
  if(c!==chapter){chapter=c;$('title').textContent='سورة '+names[c-1];$('chapter').value=c;
  $('ayah').replaceChildren(...book[c-1].map((_,i)=>new Option('ئایەت '+digits(i+1),i+1)));
  $('verses').replaceChildren(...book[c-1].map((line,i)=>{const n=i+1,el=element('article','','');el.id='v'+n;
- const p=element('p','verse',line);p.lang='ar';const row=element('div','row','');
+ const p=element('p','verse',line);p.lang='ar';verseGlosses(p,line,c,n);const row=element('div','row','');
  row.append(anchor(digits(c)+' : '+digits(n),link(c,n)),act('گوهداری',()=>play(c,n)),markButton(c,n),act('جهێ من هەلگرە',()=>{history.replaceState(null,'',link(c,n));selectVerse(c,n)}));el.append(p,row);return el}));
  $('paging').replaceChildren();if(c>1)$('paging').append(anchor(names[c-2],link(c-1)));if(c<114)$('paging').append(anchor(names[c],link(c+1)))
  }

@@ -332,7 +332,103 @@ def prayer_alerts(db,token):
                         raise
                     elif e.code!=400: raise
 
+JUZ = "جوزێن قورئانێ"
+HIFZ = "حەفز و دووبارەکرن"
+ADD_VERSE = "ئایەتەکێ زێدە بکە"
+REVIEW_DAY = "دووبارەکرنا ئەڤڕۆ"
+REVEAL = "ئایەتێ نیشان بدە"
+AGAIN = "پێدڤی ب ڕاهێنانێ هەیە"
+REMEMBERED = "من ژبەر گوت"
+REMOVE_VERSE = "ژ حەفزێ ڕابکە"
+HIFZ_MENU = [[REVIEW_DAY, ADD_VERSE], [BACK]]
+MENU.insert(2, [JUZ, HIFZ])
+JUZ_STARTS = [[1, 1], [2, 142], [2, 253], [3, 93], [4, 24], [4, 148], [5, 82], [6, 111], [7, 88], [8, 41], [9, 93], [11, 6], [12, 53], [15, 1], [17, 1], [18, 75], [21, 1], [23, 1], [25, 21], [27, 56], [29, 46], [33, 31], [36, 28], [39, 32], [41, 47], [46, 1], [51, 31], [58, 1], [67, 1], [78, 1]]
+HIFZ_GAPS = (1, 3, 7, 14, 30)
+
+def load_verse_text():
+    verses = {}
+    filename = os.path.join(os.path.dirname(__file__), "web", "quran.txt")
+    with open(filename, encoding="utf-8") as source:
+        for line in source:
+            parts = line.rstrip("\r\n").split("|", 2)
+            if len(parts) == 3 and parts[0].isdecimal():
+                verses[parts[0] + ":" + parts[1]] = parts[2]
+    return verses
+
+VERSE_TEXT = load_verse_text()
+
+def verse_name(key):
+    c, v = map(int, key.split(":"))
+    return f"{SURAHS[c-1]} · ئایەتا {v}"
+
+def verse_body(key):
+    c, v = map(int,key.split(":"))
+    return (f"{verse_name(key)}\n\n{VERSE_TEXT[key]}\n\n"
+            f"خواندن • https://quran.com/{c}/{v}\n"
+            f"گوهداری • https://everyayah.com/data/Alafasy_128kbps/{c:03}{v:03}.mp3")
+
+def study_action(v, s):
+    mode = s.get("mode")
+    today = datetime.now(IRAQ).date()
+    if v in (JUZ,"/juz"):
+        s["mode"] = "juz"
+        buttons = [str(n) for n in range(1,31)]
+        return "جوزەکێ ژ ١ تا ٣٠ هەلبژێرە.", [buttons[n:n+5] for n in range(0,30,5)]+[[BACK]]
+    if v.startswith("/juz ") or mode=="juz" and v.isdecimal():
+        number = v.split()[-1]
+        if len(number)>2 or not number.isdecimal() or not 1<=int(number)<=30:
+            return "ژمارا جوزێ ژ ١ تا ٣٠ بنێرە.", [[JUZ,BACK]]
+        n = int(number)
+        c, a = JUZ_STARTS[n-1]
+        return f"جوز {n}\n\n{verse_body(f'{c}:{a}')}", [[JUZ,HIFZ],[BACK]]
+    if v in (HIFZ, "/hifz", REVIEW_DAY):
+        deck = s.get("hifz",{})
+        due = sorted((item["due"],key) for key,item in deck.items() if item["due"]<=today.isoformat())
+        s["mode"]="hifz"
+        if v==REVIEW_DAY and due:
+            key = due[0][1]
+            s.update(mode="recall", hifz_key=key)
+            return f"{verse_name(key)}\n\nجارەکێ ژبەر بێژە، پاشی ئایەتێ ڤەکە.", [[REVEAL],[HIFZ,BACK]]
+        next_day = min((item["due"] for item in deck.values()), default=None)
+        summary = f"ئایەتێن من • {len(deck)}\nبۆ دووبارەکرنا ئەڤڕۆ • {len(due)}"
+        if next_day and not due:
+            summary += f"\nدووبارەکرنا داهاتی • {next_day}"
+        return summary,HIFZ_MENU
+    if v==ADD_VERSE:
+        s["mode"]="hifz_add"
+        return "سوورەت و ئایەتێ بنێرە، وەک ١٨:١٠.", [[HIFZ,BACK]]
+    if mode=="hifz_add" and not v.startswith("/") and v not in {b for row in MENU for b in row} and v!=BACK:
+        pair=re.fullmatch(r"(\d{1,3})\s*[:/]\s*(\d{1,3})",v)
+        key=":".join(str(int(n)) for n in pair.groups()) if pair else ""
+        if key not in VERSE_TEXT:
+            return "ئایەت نەهاتە دیتن. ژماران بپشکنە، وەک ١٨:١٠.", [[HIFZ,BACK]]
+        deck=s.setdefault("hifz",{})
+        deck.setdefault(key,{"due":today.isoformat(),"level":0})
+        s.update(mode="study_card",hifz_key=key)
+        return verse_body(key),[[REVIEW_DAY,ADD_VERSE],[REMOVE_VERSE,HIFZ],[BACK]]
+    key=s.get("hifz_key")
+    if key not in s.get("hifz",{}):
+        return None
+    if mode=="recall" and v==REVEAL:
+        s["mode"]="grade"
+        return verse_body(key),[[REMEMBERED,AGAIN],[REMOVE_VERSE,HIFZ],[BACK]]
+    if mode=="grade" and v in (REMEMBERED,AGAIN):
+        item=s["hifz"][key]
+        level=item["level"] if v==REMEMBERED else 0
+        item["due"]=(today+timedelta(days=HIFZ_GAPS[level])).isoformat()
+        item["level"]=min(level+1,len(HIFZ_GAPS)-1) if v==REMEMBERED else 0
+        s["mode"]="hifz"
+        return f"{verse_name(key)}\nدووبارەکرنا داهاتی • {item['due']}", HIFZ_MENU
+    if mode in ("grade","study_card") and v==REMOVE_VERSE:
+        del s["hifz"][key]
+        s["mode"]="hifz"
+        return "ئایەت ژ لیستا حەفزا تە هاتە ڕاکرن.", HIFZ_MENU
+
+
 def route(text, s):
+    result = study_action(text.strip(),s)
+    if result is not None:
+        return result
     result = additions(text.strip(),s)
     if result is not None:
         return result

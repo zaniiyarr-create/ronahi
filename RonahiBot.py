@@ -1,4 +1,7 @@
 import secrets
+import sys
+import practice
+import plus_shop
 import subprocess
 import ronahi_ai as ai
 from urllib.parse import urlencode
@@ -427,7 +430,73 @@ def study_action(v, s):
         return "ئایەت ژ لیستا حەفزا تە هاتە ڕاکرن.", HIFZ_MENU
 
 
+LESSONS = "پەرتووکخانا دینی"
+LESSON_TOPICS = {
+    "فەرموودێن پێغەمبەری ﷺ": {
+        "نیەت و کار": "«إِنَّمَا الأَعْمَالُ بِالنِّيَّاتِ»\nمانا • بهایێ کاری گرێدای نیەتا مرۆڤییە.\nڤەگوهێز • عومەرێ کورێ خەتتاب\nژێدەر • صحیح البخاري، ١\nhttps://sunnah.com/bukhari:1",
+        "پەیڤا باش و مێهڤانداری": "«فَلْيَقُلْ خَيْرًا أَوْ لِيَصْمُتْ»\nمانا • پەیڤا خێرێ بێژە یان بێدەنگ بمینە. د هەمان فەرموودەیێ دا ڕێزگرتنا مێهڤانی و زیان نەگەهاندنا جیرانی ژی هاتیە باسکرن.\nڤەگوهێز • ئەبو هورەیرە\nژێدەر • صحیح البخاري، ٦٠١٨\nhttps://sunnah.com/bukhari:6018",
+        "ڕاستگۆیی د بازرگانیێ دا": "کورتەمانا • ئەگەر کریار و فرۆشیار ڕاستیێ بێژن و عەیبێن کالایێ دیار بکەن، بەرەکەت د مامەڵەیا وان دا دهێتە دانان.\nڤەگوهێز • حەکیمێ کورێ حیزام\nژێدەر • صحیح البخاري، ٢٠٧٩\nhttps://sunnah.com/bukhari:2079",
+    },
+    "خوارن و ڤەخوارن": {
+        "خوارن و ڤەخوارنێن حەلال": "ئاو، میوە و سەوزەیێن پاک نموونەیێن خوارن و ڤەخوارنا حەلالن. قورئان بانگەوازێ دکەت کو مرۆڤ ژ تشتێن حەلال و پاک بخۆت.\nالبقرة · ١٦٨\nhttps://quran.com/2/168",
+        "خوارنێن حەرام و ناچاری": "گوشتێ بەرازی و ئاژەلێ ب خۆ مری ژ نموونەیێن قەدەغەکرینە. هەمان ئایەت حوکمێ ناچارییێ ژی باس دکەت، ب مەرجێ مرۆڤ ژ پێدڤییێ دەرنەچیت.\nالبقرة · ١٧٣\nhttps://quran.com/2/173",
+        "ڤەخوارنێن سەرخۆشکەر": "د قورئانێ دا فەرمان هاتیە دان کو باوەردار ژ خەمرێ دویر بکەڤن. شەراب ژ نموونەیێن وێیە.\nالمائدة · ٩٠\nhttps://quran.com/5/90",
+    },
+    "کار و داهات": {
+        "بازرگانیا حەلال": "کرین و فرۆتنا کالایەکا حەلال ب ڕەزامەندیا هەردوو لایان ڕێپێدایە. بۆ نموونە، د مارکێتێ دا نرخ و کێشا کالایێ ب ڕوونی ب کریاری بدە زانین.\nالنساء · ٢٩\nhttps://quran.com/4/29",
+        "کێش و پێڤانا دروست": "ئەگەر تە ئێک کیلۆ فرۆت، ئێک کیلۆیا تەمام بدە. قورئان فەرمانێ ب تەمامکرنا پێڤانێ و کێشانا ب دادپەروەری دکەت.\nالإسراء · ٣٥\nhttps://quran.com/17/35",
+        "ڕیبا": "د قورئانێ دا بازرگانی حەلال و ڕیبا حەرام هاتیە دانان. بۆ زانینا حوکمێ گرێبەستەکا دیارکری، مەرجێن گرێبەستێ پێدڤینە.\nالبقرة · ٢٧٥\nhttps://quran.com/2/275",
+    },
+    "بیدعە": {
+        "بیدعە د عیبادەتێ دا": "کورتەمانایا فەرموودەیێ • هەر کەس تشتەکی بخەتە ناڤ دینێ مە کو ژ وی نینە، ئەو تشتە دهێتە ڕەتکرن.\nڤەگوهێز • عائیشە، دایکا باوەداران\nژێدەر • صحیح مسلم، ١٧١٨a\nhttps://sunnah.com/muslim:1718a",
+        "نموونە و جوداهیا بۆچوونان": "نموونە • ئەگەر کەسەک بێژیت نڤێژەکا شەشێ ل هەر موسلمانەکی هەر ڕۆژ فەرزە، وی فەرزەکا نوی بێ بەڵگە دانایە. زانا د پێناسەیا بیدعە و سەپاندنا وێ ل سەر هندەک کاران دا جودا دبن. بۆ کارەکێ دیارکری، بەڵگە و شروڤەیا زانایان بپرسە.\nhttps://sunnah.com/muslim:1718a",
+    },
+    "کارێن مەکرووهـ": {
+        "مەکرووهـ چ مانایە؟": "د بەکارهێنانا گشتی یا فقهێ دا، مەکرووهـ کارەکە کو بهێلن باشترە. د فقهێ حەنەفی دا جوداهی د ناڤبەرا مەکرووهێ تەحریمی و تەنیزیهی دا هەیە، لەوما پلەیا حوکمی ژی گرنگە.\nنموونە ژ فەرموودەیێ\nhttps://sunnah.com/bukhari:568",
+        "نڤستن بەری نڤێژا عەیشایێ": "ئەبو بەرزەی ڤەگوهێرایە کو پێغەمبەر ﷺ حەز ژ نڤستنێ بەری نڤێژا عەیشایێ و ئاخفتنێ پشتی وێ نەدکر. نموونەیەکا ڕۆژانە ئەوە کو مرۆڤ ب گفتوگۆیەکا بێ پێدڤی شەڤێ درێژ بکەت.\nژێدەر • صحیح البخاري، ٥٦٨\nhttps://sunnah.com/bukhari:568",
+    },
+    "کارێن ب زیان": {
+        "قومار و دوژمنایەتی": "قورئان باس دکەت کو خەمر و قومار دبنە ئەگەرێ دوژمنایەتی و کینێ و مرۆڤی ژ زیکر و نڤێژێ دویر دکەن.\nالمائدة · ٩١\nhttps://quran.com/5/91",
+        "غیبەت و سیخوڕی": "ل عەیبێن ڤەشارتی یێن خەلکی نەگەڕە و ل پشت کەسەکی ئاخفتنا خراب ل سەر وی نەکە. ئایەت هەردوو کاران باس دکەت.\nالحجرات · ١٢\nhttps://quran.com/49/12",
+    },
+    "مافێن دایک و باب و جیرانان": {
+        "جوانی دگەل دایک و بابی": "دەمێ دایک یان باب پیر دبن، ب نەرماتی دگەل وان باخڤە. ئایەت هەتا ژ گوتنا «ئوف» ب وان ژی نەهی دکەت.\nالإسراء · ٢٣\nhttps://quran.com/17/23",
+        "مافێ جیرانی": "کورتەمانا • پێغەمبەر ﷺ شیرەت کریە کو مرۆڤ زیانێ نەگەهینیتە جیرانێ خۆ. بۆ نموونە، ڕێکا دەرگەهێ وی ڤەکری بهێلە.\nڤەگوهێز • ئەبو هورەیرە\nصحیح البخاري، ٦٠١٨\nhttps://sunnah.com/bukhari:6018",
+    },
+    "ئەدەبێ سۆشیال میدیایێ": {
+        "بەری بڵاڤکرنێ": "ئەگەر نووچەیەکا گومانلێکری گەهشتە تە، بەری هنارتنا وێ بۆ گرووپێ، ژێدەرێ بپشکنە. ئایەت ئاگەهداریێ ددەت کو مرۆڤ ب نەزانی زیانێ نەگەهینیتە خەلکی.\nالحجرات · ٦\nhttps://quran.com/49/6",
+        "ڕێز د کومێنتان دا": "گاڵتەیێ ب خەلکی نەکە و ناڤێن کرێت ل وان مەکە. ئەڤ ئەدەبە د کومێنت و گرووپێن تێلیگرامێ دا ژی دهێتە بکارئینان.\nالحجرات · ١١\nhttps://quran.com/49/11",
+    },
+}
+
+MENU.insert(0, [LESSONS, practice.HUB])
+
+
+def lesson_action(text, state):
+    if text in (LESSONS, "/learn"):
+        state.update(mode="lessons", lesson_topic=None)
+        names = list(LESSON_TOPICS)
+        return "تو دڤێی دەربارەی چ بخوینی؟", [names[i:i+2] for i in range(0, len(names), 2)] + [[BACK]]
+    if state.get("mode") != "lessons":
+        return None
+    if text in LESSON_TOPICS:
+        state["lesson_topic"] = text
+        return text + "\nبابەتەکێ هەلبژێرە.", [[name] for name in LESSON_TOPICS[text]] + [[LESSONS, BACK]]
+    topic = LESSON_TOPICS.get(state.get("lesson_topic"), {})
+    if text in topic:
+        state["last_lesson"] = text
+        extra = [[practice.TEST]] if any(case[0] == text for case in practice.CASES) else []
+        return text + "\n\n" + topic[text], extra + [[name] for name in topic] + [[LESSONS, BACK]]
+    if text.startswith("/") or text == BACK or any(text in row for row in MENU):
+        state["mode"] = None
+        return None
+    return lesson_action(LESSONS, state)
+
+
 def route(text, s):
+    lesson = lesson_action(text.strip(), s)
+    if lesson is not None:
+        return lesson
     result = study_action(text.strip(),s)
     if result is not None:
         return result
@@ -514,7 +583,7 @@ def track_join(db,chat,text):
         db.execute("INSERT OR IGNORE INTO joins(chat,code,source) SELECT ?,code,? FROM invite_links WHERE code=? AND chat<>?",(chat,source,code,chat))
 
 
-MENU.insert(0, [ai.BUTTON])
+MENU.insert(0, [ai.BUTTON, plus_shop.PLUS])
 
 
 PASSAGES = ai.passage_index(VERSE_TEXT)
@@ -537,6 +606,50 @@ def quoted_result(quote, state):
     answer = f"سوورەتا {SURAHS[c-1]} · {span}\n\n" + "\n".join(lines) + f"\n\nخواندن • https://quran.com/{c}/{first}"
     remember_exchange(state, quote, answer)
     return answer, [[BACK]]
+
+
+OCCASION = "دووعا لدویڤ بارودۆخی"
+# title, Arabic text, Badini meaning, source, common phrases
+OCCASIONS = {
+    "travel": ("دەستپێکا سەفەرێ", "اللَّهُمَّ هَوِّنْ عَلَيْنَا سَفَرَنَا هَذَا وَاطْوِ عَنَّا بُعْدَهُ", "خودایێ مە، ئەڤ سەفەرە ل مە ئاسان بکە و دوورییا وێ بۆ مە کورت بکە. ئەڤە بەشەکە ژ دووعایا درێژ یا سەفەرێ.", "صحیح مسلم · ١٣٤٢\nhttps://sunnah.com/muslim:1342", ("ئەز دچمە سەفەرێ","دووعایا سەفەرێ","دعاء السفر","سەفەر")),
+    "sleep": ("بەری نڤستنێ", "بِاسْمِكَ اللَّهُمَّ أَمُوتُ وَأَحْيَا", "خودایێ من، ب ناڤێ تە ئەز دمرم و دژیم.", "صحیح البخاري · ٦٣٢٤\nhttps://sunnah.com/bukhari:6324", ("بەری نڤستنێ چ بخوینم","ئەز دچمە نڤستنێ","دعاء النوم","پێش خەوتن")),
+    "wake": ("پشتی هشیاربوونێ ژ خەوێ", "الْحَمْدُ لِلَّهِ الَّذِي أَحْيَانَا بَعْدَ مَا أَمَاتَنَا وَإِلَيْهِ النُّشُورُ", "هەمی ستایش بۆ خودێیە، ئەوێ پشتی مرنێ مە ساخ کرینەڤە، و ڕابوونا مە بەرەڤ وییە.", "صحیح البخاري · ٦٣٢٤\nhttps://sunnah.com/bukhari:6324", ("ئەز ژ خەوێ هشیار بووم","پشتی خەوێ","دعاء الاستيقاظ")),
+    "mosque_in": ("چوونە ژوور یا مزگەفتێ", "اللَّهُمَّ افْتَحْ لِي أَبْوَابَ رَحْمَتِكَ", "خودایێ من، دەرگەهێن ڕەحما خۆ بۆ من ڤەکە.", "صحیح مسلم · ٧١٣a\nhttps://sunnah.com/muslim:713a", ("ئەز دچمە مزگەفتێ","دخول المسجد")),
+    "mosque_out": ("دەرکەفتن ژ مزگەفتێ", "اللَّهُمَّ إِنِّي أَسْأَلُكَ مِنْ فَضْلِكَ", "خودایێ من، ئەز ژ قەنجی و فەزلا تە دخوازم.", "صحیح مسلم · ٧١٣a\nhttps://sunnah.com/muslim:713a", ("ئەز ژ مزگەفتێ دەردکەڤم","الخروج من المسجد")),
+    "worry": ("دەمێ خەم و کەسەرێ", "اللَّهُمَّ إِنِّي أَعُوذُ بِكَ مِنَ الْهَمِّ وَالْحَزَنِ", "خودایێ من، ئەز ژ خەم و کەسەرێ پەنا ب تە دبەم. ئەڤە دەستپێکا دووعایێیە.", "صحیح البخاري · ٦٣٦٩\nhttps://sunnah.com/bukhari:6369", ("دووعایا خەمێ","ئەز خەمگینم","دعاء الهم")),
+}
+MENU.insert(1, [OCCASION, plus_shop.DONATE])
+
+
+def occasion_menu():
+    titles = [item[0] for item in OCCASIONS.values()]
+    return "بارودۆخێ خۆ هەلبژێرە یان بنڤیسە، وەک «ئەز دچمە سەفەرێ».", [titles[i:i+2] for i in range(0,len(titles),2)] + [[BACK]]
+
+
+def occasion_card(key, state, question):
+    title, arabic, meaning, source, _ = OCCASIONS[key]
+    body = f"{title}\n\n{arabic}\n\nمانا ب بادینی\n{meaning}\n\n{source}"
+    if state.get("mode") == "ai":
+        remember_exchange(state,question,body)
+    return body, [[OCCASION,BACK]]
+
+
+def occasion_action(text,state):
+    if text in (OCCASION,"/duas"):
+        state["mode"]="occasions"
+        return occasion_menu()
+    mode=state.get("mode")
+    if mode not in (None,"ai","occasions") or not text:
+        return None
+    query=practice.norm(text)
+    for key,(title,_,_,_,phrases) in OCCASIONS.items():
+        if any(query==practice.norm(phrase) for phrase in (title,*phrases)):
+            return occasion_card(key,state,text)
+    if mode=="occasions":
+        if text.startswith("/") or text==BACK or any(text in row for row in MENU):
+            state["mode"]=None
+        else:
+            return occasion_menu()
 
 
 def assistant_action(message, state, token):
@@ -594,6 +707,8 @@ def assistant_action(message, state, token):
         question = text or (heard if isinstance(heard, str) else "") or "پەیامەکا دەنگی"
         remember_exchange(state, question, answer)
         return answer, [[BACK]]
+    if action == "occasion" and isinstance(intent.get("key"),str) and intent["key"] in OCCASIONS:
+        return occasion_card(intent["key"],state,text or OCCASIONS[intent["key"]][0])
     if action == "find_quote" and isinstance(intent.get("quote"), str):
         return quoted_result(intent["quote"][:600], state)
     if action == "reminder" and isinstance(intent.get("time"), str) and re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", intent["time"]):
@@ -630,7 +745,13 @@ def process(db, message, username=None, token=None):
         text = message.get("text","")
         if row is None:
             track_join(db,chat,text)
-        response = assistant_action(message, state, token)
+        response = plus_shop.handle(db,state,message,token,sys.modules[__name__])
+        if response is None:
+            response = occasion_action(text.strip(),state)
+        if response is None:
+            response = practice.handle(db, state, message, username, token, sys.modules[__name__])
+        if response is None:
+            response = assistant_action(message, state, token)
         if response is not None:
             pass
         elif username and text.strip() in (INVITE,"/invite"):
@@ -678,6 +799,12 @@ def start_reader():
 def api(token, method, **payload):
     if method == "sendMessage":
         payload["text"] = reader_links(payload["text"])
+        rows = payload.get("reply_markup", {}).get("keyboard", [])
+        if any(button.get("text") == practice.READY for row in rows for button in row):
+            chunks = payload["text"].split("\n\n")
+            if len(chunks) >= 3:
+                length = lambda x: len(x.encode("utf-16-le")) // 2
+                payload["entities"] = [{"type":"spoiler","offset":length(chunks[0])+2,"length":length(chunks[1])}]
     req = Request("https://api.telegram.org/bot" + token + "/" + method,
                   data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
     try:
@@ -702,6 +829,8 @@ def serve(token):
     db.execute("CREATE TABLE IF NOT EXISTS invite_links(chat INTEGER PRIMARY KEY, code TEXT UNIQUE)")
     db.execute("CREATE TABLE IF NOT EXISTS joins(chat INTEGER PRIMARY KEY, code TEXT, source TEXT)")
     db.execute("CREATE INDEX IF NOT EXISTS joins_source ON joins(code,source)")
+    practice.setup(db)
+    plus_shop.setup(db)
     offset = None
     identified = False
     while True:
@@ -715,10 +844,21 @@ def serve(token):
                 identified = True
             prayer_alerts(db, token)
             reminders(db, token)
-            params = {"timeout": 20, "allowed_updates": ["message"]}
+            params = {"timeout": 20, "allowed_updates": ["message","pre_checkout_query"]}
             if offset is not None:
                 params["offset"] = offset
             for item in api(token, "getUpdates", **params):
+                if "pre_checkout_query" in item:
+                    query = item["pre_checkout_query"]
+                    ok = plus_shop.checkout(db,query)
+                    try:
+                        api(token,"answerPreCheckoutQuery",pre_checkout_query_id=query["id"],ok=ok,
+                            **({} if ok else {"error_message":"فاتوورە بەردەست نینە. /plus ڤەکە."}))
+                    except TelegramError as err:
+                        if err.code != 400:
+                            raise
+                    offset=item["update_id"]+1
+                    continue
                 message = item.get("message", {})
                 if message.get("chat", {}).get("type") == "private":
                     print("Private message received.", flush=True)

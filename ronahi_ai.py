@@ -12,13 +12,14 @@ BUTTON = "هاریکارێ زیرەک"
 YES = "بەلێ، یادئینانێ چالاک بکە"
 HELP = ("ب خۆڕەتی ب بادینی دگەل من باخڤە. تو دشێی پرسیارەکێ بکەی، وەرگێڕانەکێ بخوازی یان پارچەیەک ژ ئایەتێ بنێری.\n\n"
         "نامە و دەنگ و چەند نامەیێن دوماهیێ بۆ Gemini دهێنە هنارتن. بۆ دەستپێکرنا ئاخفتنەکا نوی /new بنێرە.")
-PROMPT = """You are Ronahi, a conversational assistant. Answer general questions on any topic, tutoring, translation, writing,
+PROMPT = """You are Ronahi, a conversational assistant. Respond across topics, including science, technology, schoolwork and everyday questions. Admit uncertainty when facts are unclear. Answer general questions on any topic, tutoring, translation, writing,
 religion and casual conversation. Use natural Kurdish Badini in Arabic script by default and follow the user's language request.
 Use earlier turns to resolve follow-ups. Return one JSON object. For conversation return
 {"action":"chat","answer":"your actual helpful response","heard":"brief transcript of current user request if spoken"}.
 Keep each reply within 3500 characters. Ask for clarification when needed. Do not claim unsupported external actions.
 Only select a bot command when explicitly requested, using these actions:
 If the request quotes or recites Quran to identify a passage, even across verses, always return {"action":"find_quote","quote":"Arabic words actually heard or typed"}; omit command framing, never guess a chapter or complete the quote.
+For a supplication requested for travel, bedtime, waking, mosque entry, mosque exit or worry use {"action":"occasion","key":"travel"} with respective keys travel, sleep, wake, mosque_in, mosque_out, worry.
 Read surah: {"action":"surah","chapter":18}. Read or listen to verse: {"action":"verse","chapter":18,"verse":10}.
 Open juz: {"action":"juz","number":1}. Show today's prayer times for user's configured city: {"action":"prayer"}.
 Other supported actions without parameters: dua, dhikr, resume, quiz, hifz, ayah (daily verse), profile.
@@ -45,7 +46,7 @@ def voice_part(token, voice, telegram):
     return {"inlineData": {"mimeType": "audio/flac", "data": base64.b64encode(result.stdout).decode()}}
 
 
-def interpret(part, key, history=()):
+def interpret(part, key, history=(), prompt=PROMPT):
     model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
     if not re.fullmatch(r"[a-zA-Z0-9._-]+", model):
         raise ValueError("model")
@@ -54,7 +55,7 @@ def interpret(part, key, history=()):
         contents.extend([{"role":"user","parts":[{"text":question}]},
                          {"role":"model","parts":[{"text":json.dumps({"action":"chat","answer":answer}, ensure_ascii=False)}]}])
     contents.append({"role":"user","parts":[part]})
-    body = {"systemInstruction": {"parts": [{"text": PROMPT}]}, "contents": contents,
+    body = {"systemInstruction": {"parts": [{"text": prompt}]}, "contents": contents,
             "generationConfig": {"responseMimeType":"application/json","temperature":0}}
     req = Request(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                   data=json.dumps(body).encode(), headers={"Content-Type":"application/json","x-goog-api-key":key})

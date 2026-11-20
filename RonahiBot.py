@@ -556,10 +556,7 @@ class TelegramError(Exception):
 
 
 def reader_links(text):
-    domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN","").strip()
-    base = os.environ.get("QURAN_SITE_URL", "").strip().rstrip("/") or ("https://" + domain if domain else "")
-    if not base:
-        return re.sub(r"https://quran[.]com/([0-9]+)(?:/([0-9]+))?", lambda m: "سوورەت " + m[1] + (" · ئایەت " + m[2] if m[2] else ""), text)
+    base = "https://ronahi.up.railway.app"
     return text.replace("https://quran.com/", base + "/#")
 
 def start_reader():

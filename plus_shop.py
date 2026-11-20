@@ -61,7 +61,7 @@ def setup(db):
         charge TEXT PRIMARY KEY, chat INTEGER NOT NULL, refunded INTEGER DEFAULT 0)""")
 
 def contact():
-    value=os.environ.get("PLUS_SUPPORT","").lstrip("@")
+    value=(os.environ.get("PLUS_SUPPORT") or "z_14x").strip().lstrip("@")
     return "@"+value if re.fullmatch(r"[A-Za-z0-9_]{5,32}",value) else ""
 
 def price():

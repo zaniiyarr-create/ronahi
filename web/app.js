@@ -13,8 +13,22 @@ function card(c,v,text){
  const a=anchor('',link(c,v),'card');a.append(element('span','num',digits(c)));
  const box=element('div','','');box.append(element('strong','',names[c-1]),document.createElement('br'),element('small','',text));a.append(box);return a
 }
+const juzStarts = [[1, 1], [2, 142], [2, 253], [3, 93], [4, 24], [4, 148], [5, 82], [6, 111], [7, 88], [8, 41], [9, 93], [11, 6], [12, 53], [15, 1], [17, 1], [18, 75], [21, 1], [23, 1], [25, 21], [27, 56], [29, 46], [33, 31], [36, 28], [39, 32], [41, 47], [46, 1], [51, 31], [58, 1], [67, 1], [78, 1]];
 function listing(){
  const saved=location.hash==='#saved',q=normal($('search').value),matches=[];
+ const juz=location.hash==='#juz';
+ $('byJuz').setAttribute('aria-current',juz?'page':'false');
+ $('bySurah').setAttribute('aria-current',!saved&&!juz?'page':'false');
+ if(juz){
+   $('heading').textContent='٣٠ جوز';$('search').hidden=true;$('more').hidden=true;
+   $('grid').replaceChildren(...juzStarts.map(([c,v],i)=>{
+     const entry=card(c,v,names[c-1]+' · ئایەت '+digits(v));
+     entry.querySelector('strong').textContent='جوز '+digits(i+1);
+     entry.querySelector('.num').textContent=digits(i+1);
+     return entry;
+   }));
+   updateResume();return;
+ }
  $('heading').textContent=saved?'نیشانێن من':'سوورەت';$('search').hidden=saved;
  if(saved){for(const k of marks){const [c,v]=k.split('/').map(Number);matches.push([c,v,'ئایەت '+digits(v)])}}
  else{
@@ -25,6 +39,9 @@ function listing(){
  $('grid').replaceChildren(...matches.slice(0,shown).map(r=>card(...r)));
  if(!matches.length)$('grid').textContent=saved?'د دەمێ خواندنێ دا ئایەتەکێ نیشان بکە.':'ئەنجام نەهاتە دیتن.';
  $('more').hidden=matches.length<=shown;
+ updateResume();
+}
+function updateResume(){
  $('resume').href='#'+last;$('resume').textContent=read('last',null)?'بەردەوام بە · '+names[Number(last.split('/')[0])-1]:'دەست ب خواندنێ بکە'
 }
 function markButton(c,v){const k=c+'/'+v;const b=act('',()=>{if(marks.has(k))marks.delete(k);else marks.add(k);save('marks',[...marks]);update()});function update(){b.textContent=marks.has(k)?'نیشانکری':'نیشان بکە';b.setAttribute('aria-pressed',String(marks.has(k)))}update();return b}
@@ -33,10 +50,32 @@ function selectVerse(c,v){
  document.querySelector('article.active')?.classList.remove('active');
  const article=$('v'+v);article.classList.add('active');if(v>1)article.scrollIntoView({block:'start'});else window.scrollTo(0,0)
 }
-function play(c,v){playing=[c,v];$('player').hidden=false;$('track').textContent='مشاري العفاسي · '+names[c-1]+' · '+digits(v);$('error').textContent='';
- $('audio').src='https://everyayah.com/data/Alafasy_128kbps/'+String(c).padStart(3,'0')+String(v).padStart(3,'0')+'.mp3';
- $('audio').play().catch(()=>{$('error').textContent='بۆ گوهداریکرنێ پەیوەندیا ئینتەرنێتێ بپشکنە و دوگمەیا پەخشێ لێ بدە.'});
- history.replaceState(null,'',link(c,v));selectVerse(c,v)
+function stopAudio(){
+ $('audio').pause();
+ playing=null;
+ $('player').hidden=true;
+}
+for(const id of ['reciter','repeats']){
+ const select=$(id);
+ const stored=read(id,select.value);
+ if([...select.options].some(o=>o.value===stored))select.value=stored;
+ select.onchange=()=>{
+   save(id,select.value);
+   if(playing)play(playing.c,playing.v);
+ };
+}
+$('stopAudio').onclick=stopAudio;
+function play(c,v,round=1){
+ const state={c,v,round};
+ playing=state;
+ const audio=$('audio'),reciter=$('reciter');
+ $('player').hidden=false;
+ $('track').textContent=reciter.selectedOptions[0].text+' · '+names[c-1]+' · '+digits(v)+'　'+digits(round)+' / '+digits($('repeats').value);
+ $('error').textContent='';
+ audio.src='https://everyayah.com/data/'+reciter.value+'/'+String(c).padStart(3,'0')+String(v).padStart(3,'0')+'.mp3';
+ audio.play().catch(()=>{if(playing===state)$('error').textContent='پەیوەندیا ئینتەرنێتێ بپشکنە و پەخشێ دووبارە بکە.'});
+ history.replaceState(null,'',link(c,v));
+ selectVerse(c,v);
 }
 function view(){
  const m=location.hash.match(/^#(\d+)(?:\/(\d+))?$/),c=Number(m?.[1]),v=Number(m?.[2]||1);
@@ -57,7 +96,13 @@ theme(read('night',false));$('theme').onclick=()=>theme(!document.body.classList
 function resize(delta){size=Math.max(24,Math.min(54,size+delta));document.body.style.setProperty('--size',size+'px');save('size',size)}
 resize(0);$('larger').onclick=()=>resize(2);$('smaller').onclick=()=>resize(-2);
 $('chapter').onchange=e=>location.hash=link(+e.target.value);$('ayah').onchange=e=>location.hash=link(chapter,+e.target.value);
-$('audio').onended=()=>{if(playing&&playing[1]<book[playing[0]-1].length)play(playing[0],playing[1]+1)};
+$('audio').onended=()=>{
+ if(!playing)return;
+ const {c,v,round}=playing;
+ if(round<Number($('repeats').value))play(c,v,round+1);
+ else if(v<book[c-1].length)play(c,v+1);
+ else stopAudio();
+};
 $('audio').onerror=()=>{$('error').textContent='تلاوەت نەهاتە بارکرن. پەیوەندیێ بپشکنە.'};
 $('more').onclick=()=>{shown+=48;listing()};$('search').oninput=()=>{shown=48;listing()};
 Promise.all(['chapters.json','quran.txt'].map(async path=>{const r=await fetch(path);if(!r.ok)throw Error(path);return r.text()})).then(([meta,text])=>{

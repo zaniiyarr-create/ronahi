@@ -583,7 +583,7 @@ def track_join(db,chat,text):
         db.execute("INSERT OR IGNORE INTO joins(chat,code,source) SELECT ?,code,? FROM invite_links WHERE code=? AND chat<>?",(chat,source,code,chat))
 
 
-GEMINI_CHAT = "چاتا Gemini"
+GEMINI_CHAT = "چاتا ئیسلامی"
 MENU.insert(0, [ai.BUTTON, plus_shop.PLUS])
 MENU.insert(0, [GEMINI_CHAT])
 
@@ -773,7 +773,7 @@ def assistant_action(message, state, token, targets=(), navigate=None, context="
         return route("/" + action, state)
     # A provider may propose an unknown control. Ask for a direct answer once.
     if text:
-        plain = "You are Ronahi. Reply directly in natural Badini Kurdish unless another language was requested. Use the conversation to answer the latest message. Give a useful plain-text answer. Do not emit command objects or claim to have performed external actions."
+        plain = ai.ISLAMIC_SCOPE + "\n Reply directly in natural Badini Kurdish unless another language was requested. Use the conversation to answer the latest message. Give a useful plain-text answer. Do not emit command objects or claim to have performed external actions."
         try:
             if provider == "gemini":
                 answer = ai.interpret({"text": text}, key, history, prompt=plain, conversational=True)
@@ -830,10 +830,7 @@ def gemini_chat(message, state, token):
             parts.append({"text": text})
         if not parts:
             return "پرسیارا خۆ بنڤیسە، وێنەیەکێ بنێرە یان ب دەنگ باخڤە.", [[BACK]]
-        prompt = ("You are Ronahi, powered by Gemini, in a private Telegram chat. Answer naturally in Kurdish Badini "
-                  "in Arabic script by default, or the requested language. Be a general assistant. Use earlier turns "
-                  "to continue the topic. When the user delegates a choice, choose and do the work. Respond directly "
-                  "to text, photos and voice notes. Be clear about uncertainty and actions you can actually perform.")
+        prompt = ai.ISLAMIC_SCOPE + "\nUse the conversation to resolve follow-ups. Answer directly, including questions about supplied photos or voice notes within scope. Never claim to have performed external actions."
         history = state.get("gemini_history", [])
         answer = ai.generate(parts, key, history, prompt, True)
     except (OSError, ValueError, KeyError, TypeError, IndexError, TelegramError, subprocess.SubprocessError) as err:
@@ -853,11 +850,11 @@ def smart_reply(db, message, state, username, token, previous):
     text = message.get("text","").strip()
     mode = state.get("mode")
     if not (message.get("successful_payment") or message.get("refunded_payment")):
-        if text in (GEMINI_CHAT, "/gemini") or (mode == "gemini" and text == "/new"):
+        if text in (GEMINI_CHAT, "چاتا Gemini", "/gemini") or (mode == "gemini" and text == "/new"):
             if text == "/new":
                 state.pop("gemini_history", None)
             state["mode"] = "gemini"
-            return "چاتا Gemini. پرسیارا خۆ بنڤیسە، وێنە یان دەنگەکێ بنێرە. نامە بۆ Google Gemini دهێنە هنارتن. ژ بۆ ئاخفتنەکا نوو /new بنێرە.", [[BACK]]
+            return "ب خێر هاتی بۆ چاتا ئیسلامی یا ڕوناهی. پرسیارا خۆ ل سەر قورئان، فەرموودە یان ژیانا موسلمانی بنڤیسە، وێنە یان دەنگەکێ بنێرە. نامە بۆ Google Gemini دهێنە هنارتن. ژ بۆ ئاخفتنەکا نوو /new بنێرە.", [[BACK]]
         if mode == "gemini":
             if text != BACK and not text.startswith("/"):
                 return gemini_chat(message, state, token)
@@ -942,11 +939,12 @@ def reader_links(text):
     return text.replace("https://quran.com/", base + "/#")
 
 def start_reader():
-    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+    from http.server import ThreadingHTTPServer
+    from web_chat import ReaderHandler
     from functools import partial
     from threading import Thread
     directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-    handler = partial(SimpleHTTPRequestHandler, directory=directory)
+    handler = partial(ReaderHandler, directory=directory)
     server = ThreadingHTTPServer(("0.0.0.0",int(os.environ.get("PORT","8080"))),handler)
     Thread(target=server.serve_forever,daemon=True).start()
 

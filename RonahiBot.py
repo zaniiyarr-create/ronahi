@@ -583,7 +583,9 @@ def track_join(db,chat,text):
         db.execute("INSERT OR IGNORE INTO joins(chat,code,source) SELECT ?,code,? FROM invite_links WHERE code=? AND chat<>?",(chat,source,code,chat))
 
 
+GEMINI_CHAT = "چاتا Gemini"
 MENU.insert(0, [ai.BUTTON, plus_shop.PLUS])
+MENU.insert(0, [GEMINI_CHAT])
 
 
 PASSAGES = ai.passage_index(VERSE_TEXT)
@@ -674,7 +676,7 @@ def continue_fatiha(text,state):
     return answer, [[BACK]]
 
 
-def assistant_action(message, state, token, targets=(), navigate=None, context="", keyboard=None):
+def assistant_action(message, state, token, targets=(), navigate=None, context="", keyboard=None, chat_followup=False):
     text = message.get("text", "").strip()
     mode = state.get("mode")
     if text == "/new":
@@ -691,8 +693,9 @@ def assistant_action(message, state, token, targets=(), navigate=None, context="
             return reading_action(clock, state)
         if text == BACK or text.startswith("/"):
             return None
-        return "یادئینان نەهاتە گوهارتن.", MENU
-    if text.startswith("/") or text in {b for row in MENU for b in row} or text == BACK:
+        # Free text cancels the pending change and continues the conversation.
+        state["mode"] = "ai"
+    if not chat_followup and (text.startswith("/") or text in {b for row in MENU for b in row} or text == BACK):
         state["mode"] = None
         return None
     if text and len(text) <= 1200:
@@ -703,7 +706,7 @@ def assistant_action(message, state, token, targets=(), navigate=None, context="
             return quoted_result(text, state)
     provider = ai.provider_for(bool(message.get("voice")))
     variable = ai.PROVIDER_KEYS.get(provider)
-    key = os.environ.get(variable) if variable else None
+    key = os.environ.get(variable, "").strip() if variable else None
     if not key:
         return f"بۆ چالاککرنا هاریکاری {variable or 'AI_PROVIDER'} ل Railway بپشکنە.", keyboard or MENU
     voice = message.get("voice")
@@ -723,7 +726,7 @@ def assistant_action(message, state, token, targets=(), navigate=None, context="
             intent = ai.text_intent(provider,text,key,history,prompt)
     except (OSError, ValueError, IndexError, TypeError, KeyError, TelegramError, subprocess.SubprocessError) as err:
         status=getattr(err,"code",None)
-        print("AI request failed:",type(err).__name__,status,flush=True)
+        print("AI request failed:",provider,type(err).__name__,status,flush=True)
         local=continue_fatiha(text,state)
         if local:
             return local
@@ -745,7 +748,8 @@ def assistant_action(message, state, token, targets=(), navigate=None, context="
         heard = intent.get("heard")
         question = text or (heard if isinstance(heard, str) else "") or "پەیامەکا دەنگی"
         remember_exchange(state, question, answer)
-        return answer, keyboard or MENU
+        state["mode"] = "ai"
+        return answer, [[BACK]]
     if action == "occasion" and isinstance(intent.get("key"),str) and intent["key"] in OCCASIONS:
         return occasion_card(intent["key"],state,text or OCCASIONS[intent["key"]][0])
     if action == "find_quote" and isinstance(intent.get("quote"), str):
@@ -767,7 +771,21 @@ def assistant_action(message, state, token, targets=(), navigate=None, context="
     if action in ("prayer", "dua", "dhikr", "resume", "quiz", "hifz", "ayah", "profile"):
         state["mode"] = None
         return route("/" + action, state)
-    return "فرمان ڕوون نەبوو. تکایە ئێک فرمان بنێرە.\n\n" + ai.HELP, [[BACK]]
+    # A provider may propose an unknown control. Ask for a direct answer once.
+    if text:
+        plain = "You are Ronahi. Reply directly in natural Badini Kurdish unless another language was requested. Use the conversation to answer the latest message. Give a useful plain-text answer. Do not emit command objects or claim to have performed external actions."
+        try:
+            if provider == "gemini":
+                answer = ai.interpret({"text": text}, key, history, prompt=plain, conversational=True)
+            else:
+                answer = ai.text_intent(provider, text, key, history, plain)
+            if answer.get("action") == "chat" and isinstance(answer.get("answer"), str) and answer["answer"].strip():
+                remember_exchange(state, text, answer["answer"])
+                state["mode"] = "ai"
+                return answer["answer"], [[BACK]]
+        except (OSError, ValueError, IndexError, TypeError, KeyError) as err:
+            print("AI direct reply failed:", provider, type(err).__name__, getattr(err, "code", None), flush=True)
+    return "من نەشیا داخوازیا تە تەمام بکەم. دەتوانی ب پەیڤێن دی بێژی؟", keyboard or MENU
 
 
 def native_reply(db, message, state, username, token):
@@ -794,12 +812,64 @@ def options(rows):
     return [label for row in rows for label in row] if isinstance(rows,list) else []
 
 
+def gemini_chat(message, state, token):
+    key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not key:
+        return "ژ بۆ چاتا Gemini، خودانێ بۆتی دڤێت GEMINI_API_KEY ل Railway دانێت.", [[BACK]]
+    text = (message.get("text") or message.get("caption") or "").strip()
+    parts = []
+    try:
+        if message.get("photo"):
+            parts.append(ai.photo_part(token, message["photo"], api))
+        if message.get("voice"):
+            voice = message["voice"]
+            if voice.get("duration", 0) > 60 or voice.get("file_size", 0) > ai.LIMIT:
+                return "دەنگەکێ تا ٦٠ چرکە و ٢ مێگابایت بنێرە.", [[BACK]]
+            parts.append(ai.voice_part(token, voice, api))
+        if text:
+            parts.append({"text": text})
+        if not parts:
+            return "پرسیارا خۆ بنڤیسە، وێنەیەکێ بنێرە یان ب دەنگ باخڤە.", [[BACK]]
+        prompt = ("You are Ronahi, powered by Gemini, in a private Telegram chat. Answer naturally in Kurdish Badini "
+                  "in Arabic script by default, or the requested language. Be a general assistant. Use earlier turns "
+                  "to continue the topic. When the user delegates a choice, choose and do the work. Respond directly "
+                  "to text, photos and voice notes. Be clear about uncertainty and actions you can actually perform.")
+        history = state.get("gemini_history", [])
+        answer = ai.generate(parts, key, history, prompt, True)
+    except (OSError, ValueError, KeyError, TypeError, IndexError, TelegramError, subprocess.SubprocessError) as err:
+        status = getattr(err, "code", None)
+        print("Gemini chat failed:", type(err).__name__, status, flush=True)
+        if status == 429:
+            return "سنوورێ داخوازیێن Gemini گەهشتییە. پشتی کەمەکێ دووبارە بنێرە.", [[BACK]]
+        if status in (400, 401, 403, 404):
+            return "Gemini داخواز وەرنەگرت. خودانێ بۆتی کلیلا API و ناڤێ مۆدێلێ ل Railway بپشکنیت.", [[BACK]]
+        return "بەرسڤ ڤێ جارێ نەگەهشت. تکایە نامەیێ دووبارە بنێرە.", [[BACK]]
+    label = " [photo]" if message.get("photo") else " [voice]" if message.get("voice") else ""
+    state["gemini_history"] = (history + [[text + label, answer[-6000:]]])[-12:]
+    return answer, [[BACK]]
+
+
 def smart_reply(db, message, state, username, token, previous):
     text = message.get("text","").strip()
     mode = state.get("mode")
+    if not (message.get("successful_payment") or message.get("refunded_payment")):
+        if text in (GEMINI_CHAT, "/gemini") or (mode == "gemini" and text == "/new"):
+            if text == "/new":
+                state.pop("gemini_history", None)
+            state["mode"] = "gemini"
+            return "چاتا Gemini. پرسیارا خۆ بنڤیسە، وێنە یان دەنگەکێ بنێرە. نامە بۆ Google Gemini دهێنە هنارتن. ژ بۆ ئاخفتنەکا نوو /new بنێرە.", [[BACK]]
+        if mode == "gemini":
+            if text != BACK and not text.startswith("/"):
+                return gemini_chat(message, state, token)
+            state["mode"] = None
     current = options(previous[1]) if previous else []
     global_buttons = options(MENU) + options(practice.SECTIONS) + [BACK]
-    direct = text.startswith("/") or text in global_buttons+current
+    # The reader's Resume label is also an ordinary conversational follow-up.
+    history = state.get("ai_history") or []
+    chat_followup = bool(text == RESUME and history and previous and
+                         (previous[0] == history[-1][1] or
+                          (state.get("mode") == "ai" and previous[1] == [[BACK]])))
+    direct = text.startswith("/") or (text in global_buttons + current and not chat_followup)
     form = (mode in ("p_recall","p_hadith") or
             mode=="p_words" and any(practice.norm(text)==practice.norm(w) for w in practice.GLOSS) or
             mode=="quran" and any(normalize(text)==normalize(name) for name in SURAHS) or
@@ -824,7 +894,7 @@ def smart_reply(db, message, state, username, token, previous):
         return native_reply(db,{"chat":message["chat"],"text":label},state,username,token)
     context = (previous[0][:850] if previous and isinstance(previous[1],list)
                and not str(mode).startswith(("tip_","plus_")) else "")
-    return assistant_action(message,state,token,targets,navigate,context,previous[1] if previous and isinstance(previous[1],list) else MENU)
+    return assistant_action(message,state,token,targets,navigate,context,previous[1] if previous and isinstance(previous[1],list) else MENU, chat_followup=chat_followup)
 
 
 def process(db, message, username=None, token=None):

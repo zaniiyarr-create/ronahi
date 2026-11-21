@@ -3,6 +3,8 @@ import json
 import os
 import re
 import subprocess
+import time
+from urllib.error import HTTPError
 import unicodedata
 from bisect import bisect_right
 from difflib import SequenceMatcher
@@ -49,30 +51,52 @@ def voice_part(token, voice, telegram):
 
 
 def provider_for(voice=False):
-    return "gemini" if voice else os.environ.get("AI_PROVIDER","gemini").strip().lower()
+    if voice:
+        return "gemini"
+    selected = os.getenv("AI_PROVIDER", "").strip().lower()
+    if selected and selected != "auto":
+        return {"anthropic": "claude", "chatgpt": "openai"}.get(selected, selected)
+    return next((name for name, var in PROVIDER_KEYS.items() if os.getenv(var, "").strip()), "gemini")
 
 PROVIDER_KEYS = {"gemini":"GEMINI_API_KEY","openai":"OPENAI_API_KEY","claude":"ANTHROPIC_API_KEY"}
 
 def decode_reply(raw, conversational=True):
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("Empty model response")
     raw = raw.strip()
-    candidate = raw.removeprefix("```json").removesuffix("```").strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", raw, re.S | re.I)
+    candidate = fenced.group(1) if fenced else raw
     try:
-        obj = json.loads(candidate)
+        result = json.loads(candidate)
     except json.JSONDecodeError:
-        if conversational and raw and not candidate.startswith(("{","[","```json")):
-            return {"action":"chat","answer":raw}
+        if conversational:
+            return {"action": "chat", "answer": raw}
         raise
-    if conversational and isinstance(obj,str) and obj.strip():
-        return {"action":"chat","answer":obj}
-    if conversational and isinstance(obj,(int,float,list)):
-        return {"action":"chat","answer":raw}
-    if conversational and isinstance(obj,dict) and not any(k in obj for k in ("action","answer")):
-        return {"action":"chat","answer":raw}
-    if not isinstance(obj,dict):
-        raise ValueError("No usable model reply")
-    if conversational and not obj.get("action") and isinstance(obj.get("answer"),str):
-        obj["action"]="chat"
-    return obj
+    if not conversational:
+        if not isinstance(result, dict):
+            raise ValueError("Expected a JSON object")
+        return result
+    if isinstance(result, dict):
+        if isinstance(result.get("action"), str):
+            return result
+        if isinstance(result.get("answer"), str) and result["answer"].strip():
+            return {"action": "chat", "answer": result["answer"]}
+    return {"action": "chat", "answer": result if isinstance(result, str) and result.strip() else raw}
+
+
+def request_json(request):
+    for attempt in range(2):
+        try:
+            with urlopen(request, timeout=40) as response:
+                return json.load(response)
+        except HTTPError as err:
+            if attempt or err.code not in (502, 503, 504):
+                raise
+        except (TimeoutError, ConnectionResetError):
+            if attempt:
+                raise
+        time.sleep(0.5)
+
 
 def text_intent(provider, text, key, history, prompt):
     messages = []
@@ -91,30 +115,54 @@ def text_intent(provider, text, key, history, prompt):
         body = {"model":os.environ.get("ANTHROPIC_MODEL","claude-sonnet-4-6"),
                 "system":prompt,"messages":messages,"max_tokens":3500}
     request = Request(url,data=json.dumps(body).encode(),headers=headers)
-    with urlopen(request,timeout=25) as response:
-        result = json.load(response)
+    result = request_json(request)
     raw = result["choices"][0]["message"]["content"] if provider=="openai" else "".join(
         item["text"] for item in result["content"] if item.get("type")=="text")
     return decode_reply(raw)
 
-def interpret(part, key, history=(), prompt=PROMPT):
+def generate(parts, key, history, prompt, conversational):
     model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
     if not re.fullmatch(r"[a-zA-Z0-9._-]+", model):
         raise ValueError("model")
     contents = []
     for question, answer in history:
         contents.extend([{"role":"user","parts":[{"text":question}]},
-                         {"role":"model","parts":[{"text":json.dumps({"action":"chat","answer":answer}, ensure_ascii=False)}]}])
-    contents.append({"role":"user","parts":[part]})
+                         {"role":"model","parts":[{"text":answer}]}])
+    contents.append({"role":"user","parts":parts})
     body = {"systemInstruction": {"parts": [{"text": prompt}]}, "contents": contents,
             "generationConfig": {"responseMimeType":"application/json","temperature":0}}
-    if prompt.startswith(PROMPT):
-        body["generationConfig"].pop("responseMimeType")
+    if conversational:
+        body["generationConfig"] = {"temperature": 0.7}
     req = Request(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                   data=json.dumps(body).encode(), headers={"Content-Type":"application/json","x-goog-api-key":key})
-    with urlopen(req, timeout=18) as response:
-        parts = json.load(response)["candidates"][0]["content"]["parts"]
-    return decode_reply("".join(p.get("text", "") for p in parts if not p.get("thought")), conversational=prompt.startswith(PROMPT))
+    parts = request_json(req)["candidates"][0]["content"]["parts"]
+    answer = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
+    if not answer:
+        raise ValueError("No model text")
+    return answer
+
+
+def interpret(part, key, history=(), prompt=PROMPT, conversational=None):
+    if conversational is None:
+        conversational = prompt.startswith(PROMPT)
+    return decode_reply(generate([part], key, history, prompt, conversational), conversational)
+
+
+def photo_part(token, photos, telegram):
+    limit = 4 * 1024 * 1024
+    photo = max((p for p in photos if p.get("file_size", 0) <= limit),
+                key=lambda p: p["width"] * p["height"], default=None)
+    if not photo:
+        raise ValueError("Photo too large")
+    path = telegram(token, "getFile", file_id=photo["file_id"])["file_path"]
+    if not re.fullmatch(r"[\w/-]+\.[\w]+", path):
+        raise ValueError("Invalid photo path")
+    with urlopen(f"https://api.telegram.org/file/bot{token}/{path}", timeout=12) as response:
+        data = response.read(limit + 1)
+    if len(data) > limit or not data.startswith(b"\xff\xd8"):
+        raise ValueError("Unsupported photo")
+    return {"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(data).decode()}}
+
 
 def compact_arabic(text):
     text = unicodedata.normalize("NFKC", text).translate(str.maketrans("ٱأإآىیک", "ااااييك"))

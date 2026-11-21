@@ -28,7 +28,7 @@ def reply(text):
     if value.startswith("/"):
         value = value.split()[0].split("@")[0].lower()
     if value in ("/start", "/menu", BACK):
-        return "سەلام علیکم، بخێر هاتی بۆ ڕووناهی. تو دڤێی چ بخوینی؟", MENU
+        return "سەلام علیکم، بخێر هاتی بۆ ڕووناهی. پرسیارا خۆ بنڤیسە، دەنگەکێ بنێرە یان بەشەکێ هەلبژێرە. بۆ هاریکاریا AI، نامە و دەنگ بۆ خزمەتگوزارێ AI دهێنە هنارتن.", MENU
     if value in ("دووعا", "/dua"):
         return "دووعایەکێ هەلبژێرە.", DUA_MENU
     if value in DUAS:
@@ -589,7 +589,7 @@ MENU.insert(0, [ai.BUTTON, plus_shop.PLUS])
 PASSAGES = ai.passage_index(VERSE_TEXT)
 
 def remember_exchange(state, question, answer):
-    state["ai_history"] = (state.get("ai_history", []) + [[question[:4096], answer[:4000]]])[-8:]
+    state["ai_history"] = (state.get("ai_history", []) + [[question[:4096], answer if len(answer)<=4800 else answer[:1800]+" […] "+answer[-3000:]]])[-8:]
 
 
 def quoted_result(quote, state):
@@ -652,7 +652,29 @@ def occasion_action(text,state):
             return occasion_menu()
 
 
-def assistant_action(message, state, token):
+def continue_fatiha(text,state):
+    # During an outage, continue only a clearly established Al-Fatiha lesson.
+    history=state.get("ai_history", [])
+    phrases=("یا باش وی بکە","چ تشتێ باش بیت بکە","بەردەوام بە","تو هەلبژێرە")
+    if practice.norm(text) not in {practice.norm(p) for p in phrases} or not history:
+        return None
+    last=history[-1][1]
+    if "الفاتحة" not in last or not any(w in last for w in ("فێر","ئایەت","دەرس","تجوید","تجويد","مامۆستا")):
+        return None
+    n=1
+    for i in range(1,8):
+        if last.startswith(f"وانەیا الفاتحة · {i}\n"):
+            n=i+1
+            break
+    if n>7:
+        answer="تە هەر حەفت ئایەتێن الفاتحة خواندن. نوکە سوورەتێ ژبەر بخوینە و پاشی دگەل دەقی بەراورد بکە.\nhttps://quran.com/1"
+    else:
+        answer=f"وانەیا الفاتحة · {n}\n\n"+verse_body(f"1:{n}")+"\n\nپێشێ گوهداریێ بکە. پاشی ئایەتێ دوو جاران بخوینە و جارەکێ ژبەر بێژە. دەمێ ئامادە بی، بنڤیسە «یا باش وی بکە» بۆ هەنگاڤا دی."
+    remember_exchange(state,text,answer)
+    return answer, [[BACK]]
+
+
+def assistant_action(message, state, token, targets=(), navigate=None, context="", keyboard=None):
     text = message.get("text", "").strip()
     mode = state.get("mode")
     if text == "/new":
@@ -670,10 +692,6 @@ def assistant_action(message, state, token):
         if text == BACK or text.startswith("/"):
             return None
         return "یادئینان نەهاتە گوهارتن.", MENU
-    if mode != "ai":
-        if message.get("voice"):
-            return "بۆ فرمانا دەنگی دوگمەیا «هاریکارێ زیرەک» لێ بدە، پاشی دەنگێ خۆ بنێرە.", [[ai.BUTTON, BACK]]
-        return None
     if text.startswith("/") or text in {b for row in MENU for b in row} or text == BACK:
         state["mode"] = None
         return None
@@ -683,9 +701,11 @@ def assistant_action(message, state, token):
             return quoted_result(parts[-1], state)
         if re.fullmatch(r"[\u0600-\u06ff\s]+", text) and ai.find_passage(text, PASSAGES):
             return quoted_result(text, state)
-    key = os.environ.get("GEMINI_API_KEY")
+    provider = ai.provider_for(bool(message.get("voice")))
+    variable = ai.PROVIDER_KEYS.get(provider)
+    key = os.environ.get(variable) if variable else None
     if not key:
-        return "هاریکار هێشتا نەهاتیە چالاککرن. خودانێ بۆتی دڤێت GEMINI_API_KEY ل Railway زێدە بکەت.", [[BACK]]
+        return f"بۆ چالاککرنا هاریکاری {variable or 'AI_PROVIDER'} ل Railway بپشکنە.", keyboard or MENU
     voice = message.get("voice")
     if voice and (voice.get("duration", 0) > 60 or voice.get("file_size", 0) > ai.LIMIT):
         return "دەنگەکێ تا ٦٠ چرکە و ٢ مێگابایت بنێرە.", [[BACK]]
@@ -693,20 +713,39 @@ def assistant_action(message, state, token):
         return "فرمانەکا کورت بنڤیسە یان دەنگەکێ بنێرە.", [[BACK]]
     try:
         part = ai.voice_part(token, voice, api) if voice else {"text": text}
-        intent = ai.interpret(part, key, state.get("ai_history", []))
+        prompt = ai.PROMPT + "\nFor an explicit request to open a bot feature or select a control, return {\"action\":\"navigate\",\"label\":\"exact available label\"}. Prefer specific structured verse, occasion and timed reminder actions when appropriate. For questions ABOUT a feature answer in chat. Available controls: " + json.dumps(targets,ensure_ascii=False)
+        if context:
+            prompt += "\nPrevious bot screen (reference only): "+json.dumps(context,ensure_ascii=False)
+        history = state.get("ai_history", [])
+        if provider == "gemini":
+            intent = ai.interpret(part,key,history,prompt=prompt)
+        else:
+            intent = ai.text_intent(provider,text,key,history,prompt)
     except (OSError, ValueError, IndexError, TypeError, KeyError, TelegramError, subprocess.SubprocessError) as err:
-        print("AI request failed:", type(err).__name__, getattr(err, "code", ""), flush=True)
-        return "هاریکار نەشیا فرمانێ وەربگریت. دووبارە بنێرە یان ژ مینیویێ هەلبژێرە.", [[BACK]]
+        status=getattr(err,"code",None)
+        print("AI request failed:",type(err).__name__,status,flush=True)
+        local=continue_fatiha(text,state)
+        if local:
+            return local
+        if status==429:
+            reason="خزمەتگوزارێ AI سنوورێ داخوازییان گەهشتییە. پشتی کەمەکێ دووبارە بنێرە."
+        elif status in (401,403,404):
+            reason="خزمەتگوزارێ AI ل ڤێ ڕێکخستنێ بەردەست نینە. خودانێ بۆتی کلیلا API و ناڤێ مۆدێلێ بپشکنیت."
+        else:
+            reason="بەرسڤا AI ڤێ جارێ نەگەهشت یان نەهاتە خواندن. ئاخفتنا تە هاتیە پاراستن؛ تو دشێی دووبارە بنێری."
+        return reason, keyboard or MENU
     if not isinstance(intent, dict):
         intent = {}
     action = intent.get("action")
     c, v, n = (intent.get(k) for k in ("chapter", "verse", "number"))
+    if action == "navigate" and navigate and intent.get("label") in targets:
+        return navigate(intent["label"])
     if action == "chat" and isinstance(intent.get("answer"), str) and intent["answer"].strip():
-        answer = intent["answer"].strip()[:4000]
+        answer = intent["answer"].strip()
         heard = intent.get("heard")
         question = text or (heard if isinstance(heard, str) else "") or "پەیامەکا دەنگی"
         remember_exchange(state, question, answer)
-        return answer, [[BACK]]
+        return answer, keyboard or MENU
     if action == "occasion" and isinstance(intent.get("key"),str) and intent["key"] in OCCASIONS:
         return occasion_card(intent["key"],state,text or OCCASIONS[intent["key"]][0])
     if action == "find_quote" and isinstance(intent.get("quote"), str):
@@ -731,6 +770,63 @@ def assistant_action(message, state, token):
     return "فرمان ڕوون نەبوو. تکایە ئێک فرمان بنێرە.\n\n" + ai.HELP, [[BACK]]
 
 
+def native_reply(db, message, state, username, token):
+    text = message.get("text", "").strip()
+    bot = sys.modules[__name__]
+    response = plus_shop.handle(db,state,message,token,bot)
+    if response is None:
+        response = occasion_action(text,state)
+    if response is None:
+        response = practice.handle(db,state,message,username,token,bot)
+    if response is not None:
+        return response
+    if text in (ai.BUTTON, "/ai", "/new") or state.get("mode") == "ai_confirm":
+        response = assistant_action(message,state,token)
+        if response is not None:
+            return response
+    if username and text in (INVITE, "/invite"):
+        state["mode"] = None
+        return invite_card(db,message["chat"]["id"],username)
+    return route(text,state)
+
+
+def options(rows):
+    return [label for row in rows for label in row] if isinstance(rows,list) else []
+
+
+def smart_reply(db, message, state, username, token, previous):
+    text = message.get("text","").strip()
+    mode = state.get("mode")
+    current = options(previous[1]) if previous else []
+    global_buttons = options(MENU) + options(practice.SECTIONS) + [BACK]
+    direct = text.startswith("/") or text in global_buttons+current
+    form = (mode in ("p_recall","p_hadith") or
+            mode=="p_words" and any(practice.norm(text)==practice.norm(w) for w in practice.GLOSS) or
+            mode=="quran" and any(normalize(text)==normalize(name) for name in SURAHS) or
+            mode in ("plus_days","p_group","p_verse","goal","reminder","hifz_add","position","quran","juz","count") and bool(re.fullmatch(r"[\d:：/ +]+",text)))
+    if (direct or form or mode=="ai_confirm" or
+        not (message.get("voice") or text) or
+        message.get("successful_payment") or message.get("refunded_payment")):
+        return native_reply(db,message,state,username,token)
+    # Recognize curated local supplications before contacting the model.
+    for key,(title,_,_,_,phrases) in OCCASIONS.items():
+        if text and any(practice.norm(text)==practice.norm(p) for p in (title,*phrases)):
+            return occasion_card(key,state,text)
+    targets = list(dict.fromkeys(global_buttons+[plus_shop.FIB,plus_shop.STARS,"/paysupport"]+current))
+    def navigate(label):
+        if label in (plus_shop.FIB,plus_shop.STARS):
+            state["mode"]="tip_method"
+        elif label in global_buttons:
+            state["mode"]=None
+        elif label!="/paysupport":
+            # User selects the actual control; financial consent and modifications stay explicit.
+            return "ژ بۆ جێبەجێکرنێ ل ڤێ دوگمەیێ بدە.", [[label],[BACK]]
+        return native_reply(db,{"chat":message["chat"],"text":label},state,username,token)
+    context = (previous[0][:850] if previous and isinstance(previous[1],list)
+               and not str(mode).startswith(("tip_","plus_")) else "")
+    return assistant_action(message,state,token,targets,navigate,context,previous[1] if previous and isinstance(previous[1],list) else MENU)
+
+
 def process(db, message, username=None, token=None):
     chat = message["chat"]["id"]
     mid = message["message_id"]
@@ -745,20 +841,8 @@ def process(db, message, username=None, token=None):
         text = message.get("text","")
         if row is None:
             track_join(db,chat,text)
-        response = plus_shop.handle(db,state,message,token,sys.modules[__name__])
-        if response is None:
-            response = occasion_action(text.strip(),state)
-        if response is None:
-            response = practice.handle(db, state, message, username, token, sys.modules[__name__])
-        if response is None:
-            response = assistant_action(message, state, token)
-        if response is not None:
-            pass
-        elif username and text.strip() in (INVITE,"/invite"):
-            state["mode"] = None
-            response = invite_card(db,chat,username)
-        else:
-            response = route(text,state)
+        previous = json.loads(row[2]) if row else None
+        response = smart_reply(db,message,state,username,token,previous)
         city = state.get("city")
         alerts = set(state.get("alerts",[]))
         if city != old_city or alerts != old_alerts:
@@ -818,6 +902,34 @@ def api(token, method, **payload):
         raise TelegramError(err.code, delay) from None
 
 
+def reply_parts(text):
+    # Count non-BMP characters conservatively and prefer paragraph boundaries.
+    while len(text.encode("utf-16-le")) > 8000:
+        limit = 4000
+        while len(text[:limit].encode("utf-16-le")) > 8000:
+            limit -= 1
+        cut = max(text.rfind("\n", limit//2, limit), text.rfind(" ", limit//2, limit)) + 1
+        cut = cut or limit
+        yield text[:cut]
+        text = text[cut:]
+    if text:
+        yield text
+
+
+def deliver(db,token,message,body,rows):
+    chat,mid=message["chat"]["id"],message["message_id"]
+    parts=list(reply_parts(reader_links(body)))
+    saved=db.execute("SELECT mid,sent FROM delivery WHERE chat=?",(chat,)).fetchone()
+    start=saved[1] if saved and saved[0]==mid else 0
+    for index in range(start,len(parts)):
+        args={"chat_id":chat,"text":parts[index],"link_preview_options":{"is_disabled":True}}
+        if index==len(parts)-1:
+            args["reply_markup"]=rows if isinstance(rows,dict) else {"keyboard":[[{"text":label} for label in row] for row in rows],"resize_keyboard":True}
+        api(token,"sendMessage",**args)
+        with db:
+            db.execute("INSERT OR REPLACE INTO delivery VALUES (?,?,?)",(chat,mid,index+1))
+
+
 def serve(token):
     folder = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/tmp")
     db = sqlite3.connect(os.path.join(folder, "ronahi.sqlite3"))
@@ -829,6 +941,7 @@ def serve(token):
     db.execute("CREATE TABLE IF NOT EXISTS invite_links(chat INTEGER PRIMARY KEY, code TEXT UNIQUE)")
     db.execute("CREATE TABLE IF NOT EXISTS joins(chat INTEGER PRIMARY KEY, code TEXT, source TEXT)")
     db.execute("CREATE INDEX IF NOT EXISTS joins_source ON joins(code,source)")
+    db.execute("CREATE TABLE IF NOT EXISTS delivery(chat INTEGER PRIMARY KEY,mid INTEGER,sent INTEGER)")
     practice.setup(db)
     plus_shop.setup(db)
     offset = None
@@ -864,9 +977,7 @@ def serve(token):
                     print("Private message received.", flush=True)
                     body, rows = process(db, message, bot["username"], token)
                     try:
-                        api(token, "sendMessage", chat_id=message["chat"]["id"], text=body,
-                            reply_markup=rows if isinstance(rows, dict) else {"keyboard": [[{"text": label} for label in row] for row in rows], "resize_keyboard": True},
-                            link_preview_options={"is_disabled": True})
+                        deliver(db,token,message,body,rows)
                         print("Reply sent.", flush=True)
                     except TelegramError as err:
                         print("sendMessage failed: HTTP", err.code, flush=True)

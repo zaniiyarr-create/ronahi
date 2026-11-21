@@ -11,12 +11,14 @@ from urllib.request import Request, urlopen
 BUTTON = "هاریکارێ زیرەک"
 YES = "بەلێ، یادئینانێ چالاک بکە"
 HELP = ("ب خۆڕەتی ب بادینی دگەل من باخڤە. تو دشێی پرسیارەکێ بکەی، وەرگێڕانەکێ بخوازی یان پارچەیەک ژ ئایەتێ بنێری.\n\n"
-        "نامە و دەنگ و چەند نامەیێن دوماهیێ بۆ Gemini دهێنە هنارتن. بۆ دەستپێکرنا ئاخفتنەکا نوی /new بنێرە.")
+        "نامە و دەنگ و چەند نامەیێن دوماهیێ بۆ خزمەتگوزارێ AI دهێنە هنارتن. بۆ دەستپێکرنا ئاخفتنەکا نوی /new بنێرە.")
 PROMPT = """You are Ronahi, a conversational assistant. Respond across topics, including science, technology, schoolwork and everyday questions. Admit uncertainty when facts are unclear. Answer general questions on any topic, tutoring, translation, writing,
 religion and casual conversation. Use natural Kurdish Badini in Arabic script by default and follow the user's language request.
-Use earlier turns to resolve follow-ups. Return one JSON object. For conversation return
-{"action":"chat","answer":"your actual helpful response","heard":"brief transcript of current user request if spoken"}.
-Keep each reply within 3500 characters. Ask for clarification when needed. Do not claim unsupported external actions.
+If the user says "یا باش وی بکە", "چ تشتێ باش بیت بکە", "you choose", or "continue", use the preceding conversation, pick a reasonable next step and actually do it in this reply. In tutoring, give one concrete lesson or worked example and an exercise. Do not repeat your options or ask the user to choose again. Start with a brief clarifying question only if essential information is missing. Delegating a choice never confirms a payment or sensitive action.
+Use earlier turns to resolve follow-ups. For ordinary conversation reply directly in plain text. Deliver the requested work in this reply:
+draft the letter, write the plan, translate the passage, solve the problem, or begin the lesson. Use useful detail for the task.
+For a spoken question you may return {"action":"chat","answer":"...","heard":"..."} to preserve the user's words.
+When the user delegates a choice, select a sensible approach and proceed. Do not claim external actions you cannot perform.
 Only select a bot command when explicitly requested, using these actions:
 If the request quotes or recites Quran to identify a passage, even across verses, always return {"action":"find_quote","quote":"Arabic words actually heard or typed"}; omit command framing, never guess a chapter or complete the quote.
 For a supplication requested for travel, bedtime, waking, mosque entry, mosque exit or worry use {"action":"occasion","key":"travel"} with respective keys travel, sleep, wake, mosque_in, mosque_out, worry.
@@ -46,6 +48,55 @@ def voice_part(token, voice, telegram):
     return {"inlineData": {"mimeType": "audio/flac", "data": base64.b64encode(result.stdout).decode()}}
 
 
+def provider_for(voice=False):
+    return "gemini" if voice else os.environ.get("AI_PROVIDER","gemini").strip().lower()
+
+PROVIDER_KEYS = {"gemini":"GEMINI_API_KEY","openai":"OPENAI_API_KEY","claude":"ANTHROPIC_API_KEY"}
+
+def decode_reply(raw, conversational=True):
+    raw = raw.strip()
+    candidate = raw.removeprefix("```json").removesuffix("```").strip()
+    try:
+        obj = json.loads(candidate)
+    except json.JSONDecodeError:
+        if conversational and raw and not candidate.startswith(("{","[","```json")):
+            return {"action":"chat","answer":raw}
+        raise
+    if conversational and isinstance(obj,str) and obj.strip():
+        return {"action":"chat","answer":obj}
+    if conversational and isinstance(obj,(int,float,list)):
+        return {"action":"chat","answer":raw}
+    if conversational and isinstance(obj,dict) and not any(k in obj for k in ("action","answer")):
+        return {"action":"chat","answer":raw}
+    if not isinstance(obj,dict):
+        raise ValueError("No usable model reply")
+    if conversational and not obj.get("action") and isinstance(obj.get("answer"),str):
+        obj["action"]="chat"
+    return obj
+
+def text_intent(provider, text, key, history, prompt):
+    messages = []
+    for question, answer in history:
+        messages.extend([{"role":"user","content":question},{"role":"assistant","content":answer}])
+    messages.append({"role":"user","content":text})
+    headers = {"Content-Type":"application/json"}
+    if provider == "openai":
+        url = "https://api.openai.com/v1/chat/completions"
+        headers["Authorization"] = "Bearer "+key
+        body = {"model":os.environ.get("OPENAI_MODEL","gpt-4.1-mini"),
+                "messages":[{"role":"system","content":prompt}, *messages]}
+    else:
+        url = "https://api.anthropic.com/v1/messages"
+        headers.update({"x-api-key":key,"anthropic-version":"2023-06-01"})
+        body = {"model":os.environ.get("ANTHROPIC_MODEL","claude-sonnet-4-6"),
+                "system":prompt,"messages":messages,"max_tokens":3500}
+    request = Request(url,data=json.dumps(body).encode(),headers=headers)
+    with urlopen(request,timeout=25) as response:
+        result = json.load(response)
+    raw = result["choices"][0]["message"]["content"] if provider=="openai" else "".join(
+        item["text"] for item in result["content"] if item.get("type")=="text")
+    return decode_reply(raw)
+
 def interpret(part, key, history=(), prompt=PROMPT):
     model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
     if not re.fullmatch(r"[a-zA-Z0-9._-]+", model):
@@ -57,11 +108,13 @@ def interpret(part, key, history=(), prompt=PROMPT):
     contents.append({"role":"user","parts":[part]})
     body = {"systemInstruction": {"parts": [{"text": prompt}]}, "contents": contents,
             "generationConfig": {"responseMimeType":"application/json","temperature":0}}
+    if prompt.startswith(PROMPT):
+        body["generationConfig"].pop("responseMimeType")
     req = Request(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                   data=json.dumps(body).encode(), headers={"Content-Type":"application/json","x-goog-api-key":key})
     with urlopen(req, timeout=18) as response:
         parts = json.load(response)["candidates"][0]["content"]["parts"]
-    return json.loads("".join(p.get("text", "") for p in parts if not p.get("thought")))
+    return decode_reply("".join(p.get("text", "") for p in parts if not p.get("thought")), conversational=prompt.startswith(PROMPT))
 
 def compact_arabic(text):
     text = unicodedata.normalize("NFKC", text).translate(str.maketrans("ٱأإآىیک", "ااااييك"))

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="ku-Arab" dir="rtl">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#113f32"><title>چاتا ئیسلامی · ڕووناهی</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f6f7f1;color:#153b32;font:17px/1.8 system-ui,sans-serif}header{border-bottom:1px solid #d5ded5;background:#fff}nav,main{max-width:780px;margin:auto;padding:16px 20px}nav,.line{display:flex;align-items:center;justify-content:space-between;gap:12px}nav strong{font-size:25px}a{color:inherit}h1{font-size:clamp(32px,6vw,46px);margin:14px 0 0}p{margin:6px 0 16px}.line{flex-wrap:wrap}button,input,textarea{font:inherit}button{color:inherit;cursor:pointer;border:1px solid #c4d2c7;background:white;border-radius:12px;padding:7px 16px}button:disabled{opacity:.5}textarea{display:block;width:100%;padding:12px;border-radius:12px;border:1px solid #b6c7bb;color:inherit;resize:vertical}form{background:white;padding:16px;border:1px solid #d5ded5;border-radius:16px}form .line{margin-top:10px}input{max-width:100%;font-size:14px}.send{background:#174d3c;color:white}article{margin:12px 0;padding:15px 18px;border-radius:15px;background:white;border:1px solid #d5ded5;white-space:pre-wrap;overflow-wrap:anywhere}article.user{background:#e2ede4;margin-inline-end:8%}article b{display:block;font-size:14px}#status{color:#495f54}small{color:#516658}
+</style>
+<header><nav><strong>ڕووناهی</strong><a href="/#home">قورئانا پیرۆز</a></nav></header>
+<main><div class="line"><h1>چاتا ئیسلامی</h1><button id="reset">ئاخفتنەکا نوو</button></div>
+<p>دەر‌بارەی قورئانێ، فەرموودەیان یان ژیانا ڕۆژانە یا موسلمانی بپرسە.</p>
+<div id="messages" role="log" aria-live="polite"></div>
+<form id="chat"><label for="question">پرسیارا تە</label><textarea id="question" rows="3" maxlength="4096" placeholder="بۆ نموونە، ئەز چەوا دەست ب حەفزکرنا الفاتحة بکەم؟"></textarea>
+<div class="line"><label>وێنە یان دەنگ <input id="file" type="file" accept="image/jpeg,image/png,image/webp,audio/mpeg,audio/mp4,audio/wav,audio/ogg,.m4a"></label><button class="send" id="send">بنێرە</button></div>
+<small>پرسیار و فایلێ تە بۆ Google Gemini دهێنە هنارتن. مەزنترین فایل ٣ مێگابایتە.</small></form>
+<p role="status" id="status"></p></main><script src="/chat.js" defer></script></html>
